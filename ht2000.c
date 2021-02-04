@@ -14,7 +14,7 @@
  * with vendor ID 10c4 and product ID 82cd.
  *
  * See: the internet.
- * 
+ *
  */
 
 /* Linux */
@@ -38,6 +38,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <curl/curl.h>
 
 /* C */
 #include <stdio.h>
@@ -47,6 +48,8 @@
 #include <time.h>
 
 const char *bus_str(int bus);
+int post_data(char *base_url, double temperature, double humidity, double carbon);
+size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp);
 
 int main(int argc, char **argv)
 {
@@ -60,17 +63,19 @@ int main(int argc, char **argv)
 	struct hidraw_report_descriptor rpt_desc;
 	struct hidraw_devinfo info;
 	char *device = "/dev/hidraw0";
+  char *base_url = "http://192.168.1.65:9000";
 
-	if (argc > 1) {
+	if (argc > 2) {
 		device = argv[1];
+    base_url = argv[2];
 	} else {
-		puts("Usage: ht2000 path_to_hidraw_device");
-		puts("Example: ht2000 /dev/hidraw0\n");
+		puts("Usage: ht2000 path_to_hidraw_device url");
+		puts("Example: ht2000 /dev/hidraw0 http://192.168.1.65:9000\n");
 		puts("Output example: 1470923902, 11-08-2016 15:58:22, 25.700000, 52.700000, 1309.000000");
 		puts("Output columns: epoch timestamp, human readable timestamp, temperature in degrees celsius, relative humidity in percent, CO2 level in PPM");
 		return 1;
 	}
-	
+
 
 	/* Open the Device with non-blocking reads. In real life,
 	   don't use a hard coded path; use libudev instead. */
@@ -131,59 +136,89 @@ int main(int argc, char **argv)
 	}
 
 	/* Get Feature */
-	buf[0] = 0x5; /* Report Number */
-	res = ioctl(fd, HIDIOCGFEATURE(256), buf);
-	if (res < 0) {
-		perror("HIDIOCGFEATURE");
-	} else {
-		// Too much information...
-		//printf("ioctl HIDIOCGFEATURE returned: %d\n", res);
-		/*
-		printf("Report data (not containing the report number):\n\t");
-		for (i = 0; i < res; i++)
-			printf("%hhx ", buf[i]);
-		puts("\n");
-		*/
-		if (res >= 30) {
-			memcpy(epoch, buf+1, 4);
-			//for (i = 0; i < 4; i++) printf("%hhx ", epoch[i]); puts("\n");
-			unsigned int seconds = epoch[0] * 16777216 + epoch[1] * 65536 + epoch[2] * 256 + epoch[3];
-			//printf("seconds = %u\n", seconds);
-			seconds = seconds - 2004450700;
-			printf("%u, ", seconds);
-			//printf("seconds since epoch = %u\n", seconds);
-			time_t now = seconds;
-			char* c_time_string = ctime(&now);
-			//printf("Current time is %s", c_time_string);
-			struct tm * p = localtime(&now);
-			char s[1000];
-			//strftime(s, 1000, "%A, %B %d %Y", p);
-			strftime(s, 1000, "%d-%m-%Y %H:%M:%S", p);
-			printf("%s, ", s);
+  curl_global_init(CURL_GLOBAL_ALL);
 
-			memcpy(temp, buf+7, 2);
-			double temperature = temp[0] * 256 + temp[1];
-			temperature = temperature - 400;
-			temperature = temperature / 10;
-			//printf("temperature = %f\n", temperature);
-			printf("%f, ", temperature);
+  while (1) {
+    buf[0] = 0x5; /* Report Number */
+    res = ioctl(fd, HIDIOCGFEATURE(256), buf);
+    if (res < 0) {
+      perror("HIDIOCGFEATURE");
+    } else {
+      // Too much information...
+      //printf("ioctl HIDIOCGFEATURE returned: %d\n", res);
+      /*
+      printf("Report data (not containing the report number):\n\t");
+      for (i = 0; i < res; i++)
+        printf("%hhx ", buf[i]);
+      puts("\n");
+      */
+      if (res >= 30) {
+        memcpy(epoch, buf+1, 4);
+        //for (i = 0; i < 4; i++) printf("%hhx ", epoch[i]); puts("\n");
+        unsigned int seconds = epoch[0] * 16777216 + epoch[1] * 65536 + epoch[2] * 256 + epoch[3];
+        //printf("seconds = %u\n", seconds);
+        seconds = seconds - 2004450700;
+        printf("%u, ", seconds);
+        //printf("seconds since epoch = %u\n", seconds);
+        time_t now = seconds;
+        char* c_time_string = ctime(&now);
+        //printf("Current time is %s", c_time_string);
+        struct tm * p = localtime(&now);
+        char s[1000];
+        //strftime(s, 1000, "%A, %B %d %Y", p);
+        strftime(s, 1000, "%d-%m-%Y %H:%M:%S", p);
+        printf("%s, ", s);
 
-			memcpy(rh, buf+9, 2);
-			double humidity = rh[0] * 256 + rh[1];
-			humidity = humidity / 10;
-			//printf("humidity = %f\n", humidity);
-			printf("%f, ", humidity);
+        memcpy(temp, buf+7, 2);
+        double temperature = temp[0] * 256 + temp[1];
+        temperature = temperature - 400;
+        temperature = temperature / 10;
+        //printf("temperature = %f\n", temperature);
+        printf("%f, ", temperature);
 
-			memcpy(co2, buf+24, 2);
-			double carbon = co2[0] * 256 + co2[1];
-			printf("%f\n", carbon);
-		} else {
-			puts("ERROR: report number 5 is too small so not all data is there...\n");
-		}
-	}
+        memcpy(rh, buf+9, 2);
+        double humidity = rh[0] * 256 + rh[1];
+        humidity = humidity / 10;
+        //printf("humidity = %f\n", humidity);
+        printf("%f, ", humidity);
 
+        memcpy(co2, buf+24, 2);
+        double carbon = co2[0] * 256 + co2[1];
+        printf("%f\n", carbon);
+        post_data(base_url, temperature, humidity, carbon);
+      } else {
+        puts("ERROR: report number 5 is too small so not all data is there...\n");
+      }
+    }
+    sleep(3);
+  }
+  curl_global_cleanup();
 	close(fd);
 	return 0;
+}
+
+int post_data(char *base_url, double temperature, double humidity, double carbon) {
+  CURL *curl;
+  CURLcode response;
+  curl = curl_easy_init();
+  char post_fields[1024];
+  snprintf(post_fields, sizeof(post_fields), "temperature=%f&humidity=%f&carbon=%f", temperature, humidity, carbon);
+  if(curl) {
+    curl_easy_setopt(curl, CURLOPT_URL, base_url);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_fields);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+    response = curl_easy_perform(curl);
+    if(response != CURLE_OK) {
+      fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(response));
+    }
+    curl_easy_cleanup(curl);
+  }
+  return 0;
+}
+
+size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp)
+{
+   return size * nmemb;
 }
 
 const char *

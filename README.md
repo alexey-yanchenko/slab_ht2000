@@ -1,8 +1,18 @@
 README
 ======
 
+### Requirements
+```
+sudo apt-get install libcurl4-openssl-dev
+```
+### Compile
 ```
 gcc ht2000.c -lcurl
+```
+### Usage
+
+```
+./ht2000 /dev/hidraw0 http://192.168.1.65:9000
 ```
 
 Reverse engineered userspace driver for SLAB HT2000 CO2, temperature and
